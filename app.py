@@ -25,7 +25,7 @@ TEMPLATE_LOGIN = "login.html"
 def setup():
     init_db()
 
-@app.route("/")
+@app.route("/", methods=["GET"])
 def index():
     if "user_id" in session:
         return redirect(url_for("dashboard"))
@@ -133,14 +133,14 @@ def login():
     conn.close()
     return render_template(TEMPLATE_LOGIN)
 
-@app.route("/dashboard")
+@app.route("/dashboard", methods=["GET"])
 def dashboard():
     if "user_id" not in session:
         flash("請先登入系統。")
         return redirect(url_for("login"))
     return render_template("dashboard.html", username=session["username"])
 
-@app.route("/logout")
+@app.route("/logout", methods=["GET"])
 def logout():
     session.clear()
     flash("您已成功登出。")
