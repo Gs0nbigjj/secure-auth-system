@@ -17,6 +17,9 @@ app.config.update(
 
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_DURATION_MINUTES = 15
+# 抽取重複出現的模板路徑為常數 (fix S1192)
+TEMPLATE_REGISTER = "register.html"
+TEMPLATE_LOGIN = "login.html"
 
 @app.before_request
 def setup():
@@ -36,98 +39,99 @@ def register():
 
         if not username or not password:
             flash("使用者名稱與密碼不可為空。")
-            return render_template("register.html")
+            return render_template(TEMPLATE_REGISTER)
 
         if len(password) < 8:
             flash("密碼長度至少需 8 個字元。")
-            return render_template("register.html")
+            return render_template(TEMPLATE_REGISTER)
 
         password_salt = bcrypt.gensalt()
         password_hash = bcrypt.hashpw(password.encode("utf-8"), password_salt)
 
-        conn = get_db_connection()
         try:
-            conn.execute(
-                "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-                (username, password_hash)
-            )
-            conn.commit()
+            with get_db_connection() as conn:
+                conn.execute(
+                    "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+                    (username, password_hash)
+                )
+                conn.commit()
             flash("註冊成功，請登入。")
             return redirect(url_for("login"))
         except sqlite3.IntegrityError:
             flash("該使用者名稱已被註冊。")
-        finally:
-            conn.close()
 
-    return render_template("register.html")
+    return render_template(TEMPLATE_REGISTER)
+
+def check_user_lockout(user, now):
+    """檢查使用者是否被鎖定，回傳 (is_locked, message_or_None)"""
+    if not user["locked_until"]:
+        return False, None
+    
+    locked_until = datetime.fromisoformat(user["locked_until"])
+    if now < locked_until:
+        remaining_minutes = int((locked_until - now).total_seconds() // 60) + 1
+        return True, f"登入失敗次數過多，帳號已鎖定。請於 {remaining_minutes} 分鐘後再試。"
+    return False, None
+
+def handle_failed_login(conn, user, now):
+    """處理登入失敗邏輯與連續錯誤鎖定"""
+    attempts = user["failed_attempts"] + 1
+    if attempts >= MAX_FAILED_ATTEMPTS:
+        lock_time = now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+        conn.execute(
+            "UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?",
+            (attempts, lock_time.isoformat(), user["id"])
+        )
+        flash(f"密碼錯誤達 {MAX_FAILED_ATTEMPTS} 次，帳號已被鎖定 15 分鐘。")
+    else:
+        conn.execute(
+            "UPDATE users SET failed_attempts = ? WHERE id = ?",
+            (attempts, user["id"])
+        )
+        remain = MAX_FAILED_ATTEMPTS - attempts
+        flash(f"帳號或密碼錯誤。剩餘嘗試次數：{remain} 次。")
+    conn.commit()
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
+    if request.method != "POST":
+        return render_template(TEMPLATE_LOGIN)
 
-        conn = get_db_connection()
-        user = conn.execute(
-            "SELECT * FROM users WHERE username = ?", (username,)
-        ).fetchone()
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "")
 
-        if not user:
-            flash("帳號或密碼錯誤。")
-            conn.close()
-            return render_template("login.html")
+    conn = get_db_connection()
+    user = conn.execute(
+        "SELECT * FROM users WHERE username = ?", (username,)
+    ).fetchone()
 
-        now = datetime.now()
+    if not user:
+        flash("帳號或密碼錯誤。")
+        conn.close()
+        return render_template(TEMPLATE_LOGIN)
 
-        if user["locked_until"]:
-            locked_until = datetime.fromisoformat(user["locked_until"])
-            if now < locked_until:
-                remaining_minutes = int((locked_until - now).total_seconds() // 60) + 1
-                flash(f"登入失敗次數過多，帳號已鎖定。請於 {remaining_minutes} 分鐘後再試。")
-                conn.close()
-                return render_template("login.html")
-            else:
-                conn.execute(
-                    "UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?",
-                    (user["id"],)
-                )
-                conn.commit()
+    now = datetime.now()
+    is_locked, lock_message = check_user_lockout(user, now)
+    if is_locked:
+        flash(lock_message)
+        conn.close()
+        return render_template(TEMPLATE_LOGIN)
 
-        is_valid = bcrypt.checkpw(password.encode("utf-8"), user["password_hash"])
+    if bcrypt.checkpw(password.encode("utf-8"), user["password_hash"]):
+        conn.execute(
+            "UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?",
+            (user["id"],)
+        )
+        conn.commit()
+        conn.close()
 
-        if is_valid:
-            conn.execute(
-                "UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?",
-                (user["id"],)
-            )
-            conn.commit()
-            conn.close()
+        session["user_id"] = user["id"]
+        session["username"] = user["username"]
+        return redirect(url_for("dashboard"))
 
-            session["user_id"] = user["id"]
-            session["username"] = user["username"]
-            return redirect(url_for("dashboard"))
-        else:
-            attempts = user["failed_attempts"] + 1
-            if attempts >= MAX_FAILED_ATTEMPTS:
-                lock_time = now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
-                conn.execute(
-                    "UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?",
-                    (attempts, lock_time.isoformat(), user["id"])
-                )
-                flash(f"密碼錯誤達 {MAX_FAILED_ATTEMPTS} 次，帳號已被鎖定 15 分鐘。")
-            else:
-                conn.execute(
-                    "UPDATE users SET failed_attempts = ? WHERE id = ?",
-                    (attempts, user["id"])
-                )
-                remain = MAX_FAILED_ATTEMPTS - attempts
-                flash(f"帳號或密碼錯誤。剩餘嘗試次數：{remain} 次。")
-
-            conn.commit()
-            conn.close()
-            return render_template("login.html")
-
-    return render_template("login.html")
+    handle_failed_login(conn, user, now)
+    conn.close()
+    return render_template(TEMPLATE_LOGIN)
 
 @app.route("/dashboard")
 def dashboard():
@@ -143,4 +147,5 @@ def logout():
     return redirect(url_for("login"))
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    is_debug = os.environ.get("FLASK_DEBUG", "False").lower() in ("true", "1")
+    app.run(debug=is_debug)
