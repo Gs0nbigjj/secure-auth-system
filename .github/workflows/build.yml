@@ -12,10 +12,12 @@ jobs:
     name: SonarQube Cloud
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout@v4.2.2 鎖定為官方 release commit SHA
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+      # SonarSource/sonarqube-scan-action@v5.0.0 鎖定為官方 release commit SHA
       - name: SonarQube Cloud Scan
-        uses: SonarSource/sonarqube-scan-action@v5
+        uses: SonarSource/sonarqube-scan-action@9b5a034fb879f727768565a0c8b9db809f0df8e7
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

@@ -4,9 +4,11 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 import bcrypt
 from database import get_db_connection, init_db
+from flask_wtf.csrf import CSRFProtect
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+csrf = CSRFProtect(app)
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
