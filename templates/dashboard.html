@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>系統儀表板（受保護頁面）</h2>
+<p>歡迎回來，<strong>{{ username }}</strong>！</p>
+<p>您已通過安全身分驗證。</p>
+<a href="{{ url_for('logout') }}"><button style="background: #dc3545;">登出系統</button></a>
+{% endblock %}
